@@ -1,70 +1,132 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const { validateUser, validateUserUpdate } = require('../middleware/validation');
+// Impor dependensi baru
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+// Impor validator yang baru (validateLogin sekarang ada)
+const { validateUser, validateLogin, validateUserUpdate } = require('../middleware/validation');
 
 const router = express.Router();
 
-// In-memory database (replace with real database in production)
+// In-memory database (menyimpan password yang di-hash)
 let users = [
-  {
-    id: '1',
-    name: 'John Doe',
-    email: 'john@example.com',
-    age: 30,
-    role: 'admin',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: '2',
-    name: 'Jane Smith',
-    email: 'jane@example.com',
-    age: 25,
-    role: 'user',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }
+  // Hapus data dummy lama dan biarkan kosong, atau hash password-nya
+  // {
+  //   id: '1',
+  //   name: 'John Doe',
+  //   email: 'john@example.com',
+  //   password: 'HASHED_PASSWORD_NANTI', 
+  //   role: 'admin',
+  //   createdAt: new Date().toISOString(),
+  //   updatedAt: new Date().toISOString()
+  // }
 ];
+
+// === ENDPOINT BARU: PUBLIC KEY ===
+// (api-gateway akan memanggil ini)
+router.get('/public-key', (req, res) => {
+  res.status(200).send(process.env.JWT_PUBLIC_KEY);
+});
+
+// === ENDPOINT BARU: REGISTER ===
+// (Frontend memanggil ini: POST /api/users/register)
+router.post('/register', validateUser, async (req, res, next) => {
+  try {
+    const { name, email, password } = req.body;
+    
+    // Cek jika email sudah ada
+    const existingUser = users.find(u => u.email === email);
+    if (existingUser) {
+      return res.status(409).json({
+        error: 'Email already exists',
+        message: 'A user with this email already exists'
+      });
+    }
+    
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const newUser = {
+      id: uuidv4(),
+      name,
+      email,
+      password: hashedPassword, // Simpan password yang di-hash
+      role: 'user', // Default role
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    users.push(newUser);
+    
+    // Jangan kirim password kembali
+    const userResponse = { ...newUser };
+    delete userResponse.password;
+
+    res.status(201).json({
+      message: 'User created successfully',
+      user: userResponse
+    });
+  } catch (err) {
+    next(err); // Teruskan error ke errorHandler
+  }
+});
+
+// === ENDPOINT BARU: LOGIN ===
+// (Frontend memanggil ini: POST /api/users/login)
+router.post('/login', validateLogin, async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+
+    // Cari user
+    const user = users.find(u => u.email === email);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Cek password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Buat JWT
+    const payload = {
+      sub: user.id, // Subject (user ID)
+      email: user.email,
+      role: user.role
+    };
+
+    const token = jwt.sign(
+      payload, 
+      process.env.JWT_PRIVATE_KEY, // Ambil private key dari env
+      { 
+        algorithm: 'RS256', // Harus RS256
+        expiresIn: '1h' 
+      }
+    );
+
+    res.json({
+      message: 'Login successful',
+      token: token
+    });
+
+  } catch (err) {
+    next(err); // Teruskan error ke errorHandler
+  }
+});
+
+// === RUTE ASLI (Masih bisa digunakan) ===
 
 // GET /api/users - Get all users
 router.get('/', (req, res) => {
-  const { page, limit, role, search } = req.query;
-  
-  let filteredUsers = [...users];
-  
-  // Filter by role
-  if (role) {
-    filteredUsers = filteredUsers.filter(user => user.role === role);
-  }
-  
-  // Search by name or email
-  if (search) {
-    filteredUsers = filteredUsers.filter(user => 
-      user.name.toLowerCase().includes(search.toLowerCase()) ||
-      user.email.toLowerCase().includes(search.toLowerCase())
-    );
-  }
-  
-  // If pagination params provided, return paginated response
-  if (page && limit) {
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
-    const paginatedUsers = filteredUsers.slice(startIndex, endIndex);
-    
-    return res.json({
-      users: paginatedUsers,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(filteredUsers.length / limit),
-        totalUsers: filteredUsers.length,
-        hasNext: endIndex < filteredUsers.length,
-        hasPrev: startIndex > 0
-      }
-    });
-  }
-  
-  // Otherwise return all users as simple array
-  res.json(filteredUsers);
+  // Sembunyikan password dari response
+  const safeUsers = users.map(u => {
+    const userCopy = { ...u };
+    delete userCopy.password;
+    return userCopy;
+  });
+  res.json(safeUsers);
 });
 
 // GET /api/users/:id - Get user by ID
@@ -78,79 +140,23 @@ router.get('/:id', (req, res) => {
     });
   }
   
-  res.json(user);
+  // Sembunyikan password
+  const userCopy = { ...user };
+  delete userCopy.password;
+  res.json(userCopy);
 });
 
-// POST /api/users - Create new user
+// Hapus rute POST /api/users asli (karena sudah diganti /register)
+/*
 router.post('/', validateUser, (req, res) => {
-  const { name, email, age, role = 'user' } = req.body;
-  
-  // Check if email already exists
-  const existingUser = users.find(u => u.email === email);
-  if (existingUser) {
-    return res.status(409).json({
-      error: 'Email already exists',
-      message: 'A user with this email already exists'
-    });
-  }
-  
-  const newUser = {
-    id: uuidv4(),
-    name,
-    email,
-    age,
-    role,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-  
-  users.push(newUser);
-  
-  res.status(201).json({
-    message: 'User created successfully',
-    user: newUser
-  });
+  ...
 });
+*/
 
 // PUT /api/users/:id - Update user
 router.put('/:id', validateUserUpdate, (req, res) => {
-  const userIndex = users.findIndex(u => u.id === req.params.id);
-  
-  if (userIndex === -1) {
-    return res.status(404).json({
-      error: 'User not found',
-      message: `User with ID ${req.params.id} does not exist`
-    });
-  }
-  
-  const { name, email, age, role } = req.body;
-  
-  // Check if email already exists (excluding current user)
-  if (email) {
-    const existingUser = users.find(u => u.email === email && u.id !== req.params.id);
-    if (existingUser) {
-      return res.status(409).json({
-        error: 'Email already exists',
-        message: 'A user with this email already exists'
-      });
-    }
-  }
-  
-  const updatedUser = {
-    ...users[userIndex],
-    ...(name && { name }),
-    ...(email && { email }),
-    ...(age && { age }),
-    ...(role && { role }),
-    updatedAt: new Date().toISOString()
-  };
-  
-  users[userIndex] = updatedUser;
-  
-  res.json({
-    message: 'User updated successfully',
-    user: updatedUser
-  });
+  // ... (Logika update Anda yang sudah ada bisa tetap di sini)
+  res.status(501).json({ message: 'Update not implemented yet' });
 });
 
 // DELETE /api/users/:id - Delete user

@@ -1,3 +1,18 @@
+const crypto = require('crypto');
+
+// Generate RSA key pair
+// Di produksi, ini harus dimuat dari file/env, bukan dibuat setiap kali server start.
+const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+});
+
+// Simpan key untuk digunakan di modul lain (simplifikasi)
+process.env.JWT_PRIVATE_KEY = privateKey;
+process.env.JWT_PUBLIC_KEY = publicKey;
+
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');

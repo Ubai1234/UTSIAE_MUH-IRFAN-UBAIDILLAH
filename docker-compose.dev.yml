@@ -13,7 +13,8 @@ services:
     volumes:
       - ./services/rest-api:/app
       - /app/node_modules
-    command: npm run dev
+    # MODIFIKASI: Jalankan npm install saat runtime
+    command: sh -c "npm install && npm run dev"
     networks:
       - microservices-network
 
@@ -28,6 +29,7 @@ services:
     volumes:
       - ./services/graphql-api:/app
       - /app/node_modules
+    # Perintah ini sudah benar karena service-nya sudah berjalan
     command: npm run dev
     networks:
       - microservices-network
@@ -48,7 +50,8 @@ services:
     volumes:
       - ./api-gateway:/app
       - /app/node_modules
-    command: npm run dev
+    # MODIFIKASI: Jalankan npm install saat runtime
+    command: sh -c "npm install && npm run dev"
     networks:
       - microservices-network
 
@@ -61,7 +64,7 @@ services:
       - "3002:3000"
     environment:
       - NEXT_PUBLIC_API_GATEWAY_URL=http://localhost:3000
-      - NEXT_PUBLIC_GRAPHQL_URL=http://localhost:4000/graphql
+      - NEXT_PUBLIC_GRAPHQL_URL=http://localhost:3000/graphql
     depends_on:
       - api-gateway
     volumes:

@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, gql } from '@apollo/client';
-import { userApi } from '@/lib/api';
+import { userApi, authApi } from '@/lib/api';
 
-// GraphQL queries and mutations
+// GraphQL queries and mutations (ini tetap sama)
 const GET_POSTS = gql`
   query GetPosts {
     posts {
@@ -18,8 +18,8 @@ const GET_POSTS = gql`
 `;
 
 const CREATE_POST = gql`
-  mutation CreatePost($title: String!, $content: String!, $author: String!) {
-    createPost(title: $title, content: $content, author: $author) {
+  mutation CreatePost($title: String!, $content: String!) {
+    createPost(title: $title, content: $content) {
       id
       title
       content
@@ -30,19 +30,41 @@ const CREATE_POST = gql`
 `;
 
 export default function Home() {
+  const [token, setToken] = useState<string | null>(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [newUser, setNewUser] = useState({ name: '', email: '', age: '' });
-  const [newPost, setNewPost] = useState({ title: '', content: '', author: '' });
+
+  // === MODIFIKASI 1: Tambahkan state untuk 'view' ===
+  const [view, setView] = useState<'login' | 'register'>('login'); // Mulai dari 'login'
+
+  // State untuk form
+  const [regForm, setRegForm] = useState({ name: '', email: '', password: '' });
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+  const [newPost, setNewPost] = useState({ title: '', content: '' });
+
+  // Cek token saat komponen dimuat
+  useEffect(() => {
+    const storedToken = localStorage.getItem('token');
+    if (storedToken) {
+      setToken(storedToken);
+    } else {
+      setLoading(false); // Selesai loading jika tidak ada token
+    }
+  }, []);
 
   // GraphQL queries
-  const { data: postsData, loading: postsLoading, refetch: refetchPosts } = useQuery(GET_POSTS);
+  const { data: postsData, loading: postsLoading, refetch: refetchPosts } = useQuery(GET_POSTS, {
+    skip: !token, // Jangan fetch post jika belum login
+  });
   const [createPost] = useMutation(CREATE_POST);
 
-  // Fetch users from REST API
+  // Fetch users from REST API (Hanya jika token ada)
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    if (token) {
+      setLoading(true);
+      fetchUsers();
+    }
+  }, [token]);
 
   const fetchUsers = async () => {
     try {
@@ -55,19 +77,42 @@ export default function Home() {
     }
   };
 
-  const handleCreateUser = async (e: React.FormEvent) => {
+  // === MODIFIKASI 2: Ubah 'handleRegister' untuk pindah view ===
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await userApi.createUser({
-        name: newUser.name,
-        email: newUser.email,
-        age: parseInt(newUser.age)
-      });
-      setNewUser({ name: '', email: '', age: '' });
-      fetchUsers();
+      await authApi.register(regForm);
+      alert('Registration successful! Please login.');
+      setRegForm({ name: '', email: '', password: '' });
+      setView('login'); // Pindahkan kembali ke view login
     } catch (error) {
-      console.error('Error creating user:', error);
+      console.error('Error registering:', error);
+      alert('Registration failed.');
     }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const response = await authApi.login(loginForm);
+      const { token } = response.data;
+      
+      localStorage.setItem('token', token);
+      setToken(token); // Ini akan memicu re-render ke Dashboard
+      
+      setLoginForm({ email: '', password: '' });
+      refetchPosts(); // Panggil refetch setelah login
+    } catch (error) {
+      console.error('Error logging in:', error);
+      alert('Login failed. Check credentials.');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setToken(null);
+    setUsers([]); 
+    setView('login'); // Kembali ke view login setelah logout
   };
 
   const handleCreatePost = async (e: React.FormEvent) => {
@@ -76,10 +121,11 @@ export default function Home() {
       await createPost({
         variables: newPost,
       });
-      setNewPost({ title: '', content: '', author: '' });
+      setNewPost({ title: '', content: '' });
       refetchPosts();
     } catch (error) {
       console.error('Error creating post:', error);
+      alert('Failed to create post. Are you logged in?');
     }
   };
 
@@ -92,57 +138,137 @@ export default function Home() {
     }
   };
 
+  // Tampilkan loading jika sedang memverifikasi token
+  if (loading && token === null) {
+     return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+  }
+
+  // === MODIFIKASI 3: Ubah cara render halaman Auth ===
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-md w-full space-y-8">
+          <h1 className="text-4xl font-bold text-center text-gray-900">
+            Microservices Demo App
+          </h1>
+          
+          {/* Tampilkan Form Login */}
+          {view === 'login' && (
+            <div className="bg-white shadow rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">Login</h2>
+              <form onSubmit={handleLogin} className="mb-6">
+                <div className="grid grid-cols-1 gap-4">
+                  <input
+                    type="email"
+                    placeholder="Email"
+                    value={loginForm.email}
+                    onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
+                    className="border rounded-md px-3 py-2"
+                    required
+                  />
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    value={loginForm.password}
+                    onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                    className="border rounded-md px-3 py-2"
+                    required
+                  />
+                  <button
+                    type="submit"
+                    className="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 w-full"
+                  >
+                    Login
+                  </button>
+                </div>
+              </form>
+              <p className="text-center text-sm">
+                Belum punya akun?{' '}
+                <button
+                  onClick={() => setView('register')}
+                  className="font-medium text-blue-600 hover:text-blue-500"
+                >
+                  Register di sini
+                </button>
+              </p>
+            </div>
+          )}
+
+          {/* Tampilkan Form Register */}
+          {view === 'register' && (
+            <div className="bg-white shadow rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">Register</h2>
+              <form onSubmit={handleRegister} className="mb-6">
+                <div className="grid grid-cols-1 gap-4">
+                  <input
+                    type="text"
+                    placeholder="Name"
+                    value={regForm.name}
+                    onChange={(e) => setRegForm({ ...regForm, name: e.target.value })}
+                    className="border rounded-md px-3 py-2"
+                    required
+                  />
+                  <input
+                    type="email"
+                    placeholder="Email"
+                    value={regForm.email}
+                    onChange={(e) => setRegForm({ ...regForm, email: e.target.value })}
+                    className="border rounded-md px-3 py-2"
+                    required
+                  />
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    value={regForm.password}
+                    onChange={(e) => setRegForm({ ...regForm, password: e.target.value })}
+                    className="border rounded-md px-3 py-2"
+                    required
+                  />
+                  <button
+                    type="submit"
+                    className="bg-gray-700 text-white px-4 py-2 rounded-md hover:bg-gray-800 w-full"
+                  >
+                    Register
+                  </button>
+                </div>
+              </form>
+              <p className="text-center text-sm">
+                Sudah punya akun?{' '}
+                <button
+                  onClick={() => setView('login')}
+                  className="font-medium text-blue-600 hover:text-blue-500"
+                >
+                  Login di sini
+                </button>
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // === INI ADALAH DASHBOARD ANDA ===
+  // (Render ini jika token ADA)
   return (
     <div className="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-4xl font-bold text-center text-gray-900 mb-12">
-          Microservices Demo App
-        </h1>
+        <div className="flex justify-between items-center mb-12">
+          <h1 className="text-4xl font-bold text-gray-900">
+            Microservices Demo App
+          </h1>
+          <button
+            onClick={handleLogout}
+            className="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600"
+          >
+            Logout
+          </button>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Users Section (REST API) */}
           <div className="bg-white shadow rounded-lg p-6">
             <h2 className="text-2xl font-bold text-gray-900 mb-6">Users (REST API)</h2>
-            
-            {/* Create User Form */}
-            <form onSubmit={handleCreateUser} className="mb-6">
-              <div className="grid grid-cols-1 gap-4">
-                <input
-                  type="text"
-                  placeholder="Name"
-                  value={newUser.name}
-                  onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
-                  className="border rounded-md px-3 py-2"
-                  required
-                />
-                <input
-                  type="email"
-                  placeholder="Email"
-                  value={newUser.email}
-                  onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                  className="border rounded-md px-3 py-2"
-                  required
-                />
-                <input
-                  type="number"
-                  placeholder="Age"
-                  value={newUser.age}
-                  onChange={(e) => setNewUser({ ...newUser, age: e.target.value })}
-                  className="border rounded-md px-3 py-2"
-                  min="1"
-                  max="150"
-                  required
-                />
-                <button
-                  type="submit"
-                  className="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600"
-                >
-                  Add User
-                </button>
-              </div>
-            </form>
-
-            {/* Users List */}
             {loading ? (
               <p>Loading users...</p>
             ) : (
@@ -188,19 +314,11 @@ export default function Home() {
                   className="border rounded-md px-3 py-2 h-24"
                   required
                 />
-                <input
-                  type="text"
-                  placeholder="Author"
-                  value={newPost.author}
-                  onChange={(e) => setNewPost({ ...newPost, author: e.target.value })}
-                  className="border rounded-md px-3 py-2"
-                  required
-                />
                 <button
                   type="submit"
                   className="bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600"
                 >
-                  Add Post
+                  Add Post (as Logged in User)
                 </button>
               </div>
             </form>
